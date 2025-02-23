@@ -1,0 +1,90 @@
+name: MarginApp Tests
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'margin_app/**'
+      - 'devops/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'margin_app/**'
+      - 'devops/**'
+
+jobs:
+  shared:
+    uses: ./.github/workflows/shared_workflow.yml
+    with:
+      python-version: "3.12"
+      env-vars: |
+        ENV_VERSION=DEV
+
+  test:
+    runs-on: ubuntu-latest
+    needs: shared
+    
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: margin_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          poetry config virtualenvs.create false
+
+      - name: Create .env file
+        run: |
+          cp .env.example .env
+          echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/margin_test" >> .env
+          echo "ENV_VERSION=test" >> .env
+
+      - name: Install dependencies
+        working-directory: ./margin_app
+        run: poetry install --no-interaction
+
+      - name: Run Alembic migrations
+        working-directory: ./margin_app
+        run: |
+          poetry run alembic upgrade head
+
+      - name: Run tests
+        working-directory: ./margin_app
+        run: |
+          poetry run pytest app/tests -v
+
+      - name: Run coverage tests
+        working-directory: ./margin_app
+        run: |
+          poetry run pytest app/tests --cov=app --cov-report=xml --cov-fail-under=80
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./margin_app/coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: true
